@@ -1,8 +1,17 @@
 """Assign (string, fret) to every note with a polyphonic Viterbi over chord shapes.
 
 Notes whose onsets fall within `chord_window` of each other form one chord. For each chord we
-enumerate playable shapes (one note per string, limited fret span), then pick the sequence of
-shapes minimising shape difficulty + hand movement + collisions with still-ringing strings.
+enumerate candidates: a subset of its notes plus a playable shape for them (one note per string,
+limited fret span). Leaving a note out costs something proportional to its loudness, and much
+less if it looks like an overtone of a louder note (octave, 12th or double octave above). This
+lets transcription artefacts be dropped instead of dragging a whole chord up the neck. Dropped
+notes keep string=None: they stay in the MIDI but not in the tab.
+
+The Viterbi then picks the sequence of candidates minimising drop cost + shape difficulty
+(stretch, height on the neck) + hand shifts + collisions with still-ringing strings. A shift
+beyond the hand's reach has a fixed cost plus a small per-fret cost (so there is no incentive to
+stop at a halfway position). The hand position is carried through open-string chords (they don't
+teleport the hand), and shift cost shrinks with the time since the hand last fretted something.
 
 Step costs are combined with an Lp norm: p=1 is the plain sum, larger p penalises the single
 hardest moment more (p=inf minimises the worst step). Minimising sum(c**p) is equivalent to
@@ -18,6 +27,7 @@ from dataclasses import dataclass, replace
 from audio2score.models import STANDARD_TUNING, NoteEvent
 
 Shape = tuple[tuple[int, int], ...]  # (string, fret) per kept chord note, same order as pitches
+OVERTONE_INTERVALS = (12, 19, 24)  # octave, octave + fifth, two octaves
 
 
 @dataclass(frozen=True)
@@ -26,12 +36,29 @@ class FretConfig:
     max_fret: int = 19  # classical guitar
     max_span: int = 4  # max distance between lowest and highest fretted note in one shape
     chord_window: float = 0.04  # seconds; onsets closer than this form one chord
-    max_candidates: int = 24  # beam: keep the K cheapest shapes per chord
+    max_candidates: int = 32  # beam: keep the K cheapest candidates per chord
     w_span: float = 1.0  # per fret of stretch within a shape
-    w_height: float = 0.1  # per fret of hand position (mild preference for low positions)
+    w_height: float = 0.15  # per fret of hand position
+    high_fret: int = 7  # above this fret, each extra fret of hand position costs w_high more
+    w_high: float = 0.3
     w_fretted: float = 0.2  # per fretted (non-open) note
-    w_move: float = 0.5  # per fret of hand shift between consecutive chords
+    reach: int = 2  # hand-position changes up to this many frets need no real shift
+    w_shift: float = 1.5  # fixed cost of a shift beyond `reach`
+    w_move: float = 0.15  # per fret of position change
+    move_relax: float = 0.5  # seconds; movement cost is divided by (1 + elapsed / move_relax)
     w_ring: float = 3.0  # per note that cuts off a different note still ringing on that string
+    w_drop: float = 6.0  # cost of leaving out a note: w_drop * (0.5 + 0.5 * velocity / 127)
+    outer_drop_factor: float = 1.5  # bass and top notes are more costly to drop
+    overtone_drop_factor: float = 0.3  # likely overtones are cheap to drop
+    overtone_window: float = 0.05  # seconds; onset tolerance for overtone detection
+    max_extra_drops: int = 2  # per chord, beyond what is needed to make it playable at all
+
+
+@dataclass(frozen=True)
+class Candidate:
+    keep: tuple[int, ...]  # indices into the sorted note list, ascending pitch
+    shape: Shape
+    cost: float  # shape cost + drop cost
 
 
 def group_chords(notes: list[NoteEvent], window: float) -> list[list[int]]:
@@ -66,8 +93,13 @@ def shape_cost(shape: Shape, cfg: FretConfig) -> float:
     fretted = [f for _, f in shape if f > 0]
     if not fretted:
         return 0.0
-    span = max(fretted) - min(fretted)
-    return cfg.w_span * span + cfg.w_height * min(fretted) + cfg.w_fretted * len(fretted)
+    pos = min(fretted)
+    return (
+        cfg.w_span * (max(fretted) - pos)
+        + cfg.w_height * pos
+        + cfg.w_high * max(0, pos - cfg.high_fret)
+        + cfg.w_fretted * len(fretted)
+    )
 
 
 def enumerate_shapes(pitches: list[int], cfg: FretConfig) -> list[Shape]:
@@ -94,42 +126,84 @@ def enumerate_shapes(pitches: list[int], cfg: FretConfig) -> list[Shape]:
     return shapes[: cfg.max_candidates]
 
 
-def _playable_subset(pitches: list[int], cfg: FretConfig) -> tuple[list[int], list[Shape]]:
-    """Indices of the largest playable subset of `pitches` (dropping inner voices first)."""
-    idx = [i for i, p in enumerate(pitches) if positions(p, cfg)]  # in instrument range
-    n = len(idx)
-    for drop in range(n):
-        # Prefer keeping the outer voices: try removing inner notes before bass/melody.
-        removal_order = idx[1:-1] + idx[:1] + idx[-1:] if n > 2 else idx
-        for removed in itertools.combinations(removal_order, drop):
-            keep = [i for i in idx if i not in removed]
-            shapes = enumerate_shapes([pitches[i] for i in keep], cfg)
-            if shapes:
-                return keep, shapes
-    return [], []
+def overtone_flags(notes: list[NoteEvent], cfg: FretConfig) -> list[bool]:
+    """True for notes that start with a louder note an octave/12th/2 octaves below."""
+    flags = [False] * len(notes)
+    order = sorted(range(len(notes)), key=lambda i: notes[i].onset)
+    lo = 0
+    for i in order:
+        n = notes[i]
+        while notes[order[lo]].onset < n.onset - cfg.overtone_window:
+            lo += 1
+        for j in order[lo:]:
+            m = notes[j]
+            if m.onset > n.onset + cfg.overtone_window:
+                break
+            if n.pitch - m.pitch in OVERTONE_INTERVALS and m.velocity > n.velocity:
+                flags[i] = True
+                break
+    return flags
 
 
-def _transition_cost(
-    prev_shape: Shape,
-    prev_notes: list[NoteEvent],
-    shape: Shape,
-    notes: list[NoteEvent],
-    cfg: FretConfig,
-) -> float:
-    cost = 0.0
-    a, b = hand_position(prev_shape), hand_position(shape)
-    if a is not None and b is not None:
-        cost += cfg.w_move * abs(a - b)
-    onset = notes[0].onset
+def _chord_candidates(
+    chord: list[int], notes: list[NoteEvent], overtone: list[bool], cfg: FretConfig
+) -> list[Candidate]:
+    """Candidates for one chord (indices sorted by pitch), cheapest first."""
+    playable = [i for i in chord if positions(notes[i].pitch, cfg)]  # in instrument range
+    if not playable:
+        return []
+
+    def drop_cost(i: int) -> float:
+        c = cfg.w_drop * (0.5 + 0.5 * notes[i].velocity / 127)
+        if i in (playable[0], playable[-1]):
+            c *= cfg.outer_drop_factor
+        if overtone[i]:
+            c *= cfg.overtone_drop_factor
+        return c
+
+    cands: list[Candidate] = []
+    first_feasible: int | None = None
+    for k in range(len(playable) + 1):
+        if first_feasible is not None and k > first_feasible + cfg.max_extra_drops:
+            break
+        for removed in itertools.combinations(playable, k):
+            keep = tuple(i for i in playable if i not in removed)
+            if keep:
+                shapes = enumerate_shapes([notes[i].pitch for i in keep], cfg)
+            elif all(overtone[i] for i in removed):
+                shapes = [()]  # a chord made only of overtones may vanish entirely
+            else:
+                continue
+            if not shapes:
+                continue
+            if first_feasible is None:
+                first_feasible = k
+            dc = sum(drop_cost(i) for i in removed)
+            cands.extend(Candidate(keep, sh, shape_cost(sh, cfg) + dc) for sh in shapes)
+    cands.sort(key=lambda c: c.cost)
+    return cands[: cfg.max_candidates]
+
+
+def _move_cost(a: int, b: int, elapsed: float, cfg: FretConfig) -> float:
+    d = abs(a - b)
+    cost = cfg.w_move * d + (cfg.w_shift if d > cfg.reach else 0.0)
+    return cost / (1 + elapsed / cfg.move_relax)
+
+
+def _ring_cost(prev: Candidate, cur: Candidate, notes: list[NoteEvent], cfg: FretConfig) -> float:
+    if not cur.keep:
+        return 0.0
+    onset = notes[cur.keep[0]].onset
     ringing = {
-        s: n.pitch
-        for (s, _), n in zip(prev_shape, prev_notes, strict=True)
-        if n.offset > onset + cfg.chord_window
+        s: notes[i].pitch
+        for (s, _), i in zip(prev.shape, prev.keep, strict=True)
+        if notes[i].offset > onset + cfg.chord_window
     }
-    for (s, _), n in zip(shape, notes, strict=True):
-        if s in ringing and ringing[s] != n.pitch:
-            cost += cfg.w_ring
-    return cost
+    return cfg.w_ring * sum(
+        1
+        for (s, _), i in zip(cur.shape, cur.keep, strict=True)
+        if s in ringing and ringing[s] != notes[i].pitch
+    )
 
 
 def assign(
@@ -137,21 +211,21 @@ def assign(
 ) -> list[NoteEvent]:
     """Return copies of `notes` (sorted by onset) with `string`/`fret` set.
 
-    Notes that cannot be placed (out of range, or too many in one chord) keep string=None.
+    Notes left out of the tab (out of range, unplayable, or dropped as likely overtones) keep
+    string=None.
     """
     cfg = cfg or FretConfig()
     if p < 1:
         raise ValueError("playability p must be >= 1")
     notes = sorted(notes, key=lambda n: (n.onset, n.pitch))
-    chords = group_chords(notes, cfg.chord_window)
+    overtone = overtone_flags(notes, cfg)
 
-    # Per chord: kept note indices (into `notes`) and their candidate shapes.
-    steps: list[tuple[list[int], list[Shape]]] = []
-    for chord in chords:
+    steps: list[tuple[float, list[Candidate]]] = []  # (onset, candidates) per chord
+    for chord in group_chords(notes, cfg.chord_window):
         chord.sort(key=lambda i: notes[i].pitch)
-        keep_local, shapes = _playable_subset([notes[i].pitch for i in chord], cfg)
-        if shapes:
-            steps.append(([chord[k] for k in keep_local], shapes))
+        cands = _chord_candidates(chord, notes, overtone, cfg)
+        if cands:
+            steps.append((notes[chord[0]].onset, cands))
 
     if not steps:
         return [replace(n) for n in notes]
@@ -159,38 +233,47 @@ def assign(
     def combine(acc: float, step: float) -> float:
         return max(acc, step) if math.isinf(p) else acc + step**p
 
-    # Viterbi
-    first_shapes = steps[0][1]
-    score = [combine(0.0, shape_cost(sh, cfg)) for sh in first_shapes]
-    back: list[list[int]] = [[-1] * len(first_shapes)]
+    # Viterbi. Besides the score, each state remembers the hand position and the time it was
+    # last fretting along its best path, so open-string chords don't reset the hand.
+    first = steps[0][1]
+    score = [combine(0.0, c.cost) for c in first]
+    hand = [hand_position(c.shape) for c in first]
+    hand_time = [steps[0][0]] * len(first)
+    back: list[list[int]] = [[-1] * len(first)]
     for t in range(1, len(steps)):
-        prev_idx, prev_shapes = steps[t - 1]
-        cur_idx, cur_shapes = steps[t]
-        prev_notes = [notes[i] for i in prev_idx]
-        cur_notes = [notes[i] for i in cur_idx]
-        new_score, ptr = [], []
-        for sh in cur_shapes:
-            base = shape_cost(sh, cfg)
+        onset, cur = steps[t]
+        prev = steps[t - 1][1]
+        new_score, new_hand, new_time, ptr = [], [], [], []
+        for c in cur:
+            pos = hand_position(c.shape)
             best, best_j = math.inf, -1
-            for j, psh in enumerate(prev_shapes):
-                step = base + _transition_cost(psh, prev_notes, sh, cur_notes, cfg)
+            for j, pc in enumerate(prev):
+                step = c.cost + _ring_cost(pc, c, notes, cfg)
+                if pos is not None and hand[j] is not None:
+                    step += _move_cost(hand[j], pos, onset - hand_time[j], cfg)
                 total = combine(score[j], step)
                 if total < best:
                     best, best_j = total, j
             new_score.append(best)
             ptr.append(best_j)
-        score = new_score
+            if pos is None:
+                new_hand.append(hand[best_j])
+                new_time.append(hand_time[best_j])
+            else:
+                new_hand.append(pos)
+                new_time.append(onset)
+        score, hand, hand_time = new_score, new_hand, new_time
         back.append(ptr)
 
     # Backtrack
     j = min(range(len(score)), key=score.__getitem__)
-    chosen: list[Shape] = [()] * len(steps)
+    chosen: list[Candidate] = [first[0]] * len(steps)
     for t in range(len(steps) - 1, -1, -1):
         chosen[t] = steps[t][1][j]
         j = back[t][j]
 
     out = [replace(n) for n in notes]
-    for (idx, _), shape in zip(steps, chosen, strict=True):
-        for i, (s, f) in zip(idx, shape, strict=True):
+    for c in chosen:
+        for i, (s, f) in zip(c.keep, c.shape, strict=True):
             out[i].string, out[i].fret = s, f
     return out

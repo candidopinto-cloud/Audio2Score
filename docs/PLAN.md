@@ -2,12 +2,13 @@
 
 ## Milestone 0 — Environment (½ day)
 - [x] Install Python 3.11, ffmpeg (`winget install Gyan.FFmpeg`), git.
-- [ ] Install MuseScore 4 (needed from Milestone 2): `winget install MuseScore.MuseScore`.
+- [x] Install MuseScore 4 (`winget install Musescore.Musescore`; 4.7.5 at `C:\Program Files\MuseScore 4\bin\MuseScore4.exe`).
 - [x] `git init`; create venv: `py -3.11 -m venv .venv` then `.venv\Scripts\activate`.
 - [x] `pip install -e .[dev,eval,basic_pitch]` (Basic Pitch 0.4.0 verified on Windows; pulls TensorFlow 2.15, numpy 1.26).
 - [ ] Check GPU: `python -c "import torch; print(torch.cuda.is_available())"`. RTX 5080 present; torch not
       installed yet (not needed until GAPS; RTX 50-series needs a cu128+ build).
-- [ ] Put 5–10 test recordings in `data/` and their scores in `data/reference/`.
+- [x] Test recordings in `data/` (3 so far: Rosas, Porto [drop-D], Xaxado).
+- [ ] Reference scores: none — the three pieces are unpublished. Need another source (see EVAL.md).
 
 ## Milestone 1 — Command-line MVP: audio → MIDI + tab
 - [x] `audio_io`: load any audio/video via ffmpeg → mono float32 array + sample rate.
@@ -16,9 +17,11 @@
 - [x] `export`: MIDI + ASCII tab.
 - [x] `cli`: `audio2score song.mp4 -o out/`.
 - [x] Unit tests for fretting and exporters.
-- [ ] Run on the real recordings in `data/`; review the tabs and log a first F1 in `docs/EVAL.md`.
-- [ ] Handle spurious octave/harmonic notes from the transcriber (on synthetic audio one ghost note
-      forced a whole chord up the neck). Idea: let fretting drop low-velocity notes at a cost.
+- [x] Run on the real recordings in `data/`; review the tabs; log results in `docs/EVAL.md`
+      (playability proxy, since there are no reference scores).
+- [x] Handle spurious octave/harmonic notes: fretting may drop notes at a cost (cheap for likely
+      overtones); high-fret cost; fixed+per-fret shift cost, time-scaled, hand carried through
+      open strings.
 
 ## Milestone 2 — Classical-guitar transcription + score
 - [ ] Verify and integrate the GAPS model as the primary backend; compare with Basic Pitch.

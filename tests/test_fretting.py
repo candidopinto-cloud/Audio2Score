@@ -109,3 +109,54 @@ def test_playability_norms_all_produce_valid_assignment(p):
 def test_invalid_p():
     with pytest.raises(ValueError):
         assign([note(0.0, 64)], p=0.5)
+
+
+def vnote(onset, pitch, vel, dur=0.25):
+    return NoteEvent(onset=onset, offset=onset + dur, pitch=pitch, velocity=vel)
+
+
+def test_overtones_dropped_instead_of_forcing_high_shape():
+    # Xaxado @17.07 s: A2 E3 A3 E4 + quiet C5 and E5 (E5 = octave of the louder E4).
+    # Keeping everything forced A3 to the 17th fret of the low E string.
+    chord = [(45, 58), (52, 48), (57, 47), (64, 65), (72, 44), (76, 39)]
+    out = assign([vnote(17.07, p, v) for p, v in chord])
+    placed = {n.pitch: n.fret for n in out if n.string is not None}
+    assert {45, 52, 57, 64} <= set(placed)
+    assert 76 not in placed
+    assert max(placed.values()) <= 7
+
+
+def test_e3_after_high_note_returns_to_low_position():
+    # Xaxado @18.53-19.45 s: E5 at the 12th fret, then E3 + open B, then open chords.
+    # E3 used to stay at the 12th fret of the low E string; it belongs on D-string fret 2.
+    notes = [
+        vnote(18.53, 76, 74, 0.29),
+        vnote(19.03, 52, 38, 0.2),
+        vnote(19.03, 59, 50, 0.28),
+        *[vnote(19.31, p, 60, 0.15) for p in (55, 59, 64)],
+        *[vnote(19.45, p, 50, 0.12) for p in (52, 55, 59)],
+    ]
+    out = assign(notes)
+    e3 = [(n.string, n.fret) for n in out if n.pitch == 52]
+    assert e3 == [(2, 2), (2, 2)]
+
+
+def test_hand_position_carried_through_open_strings():
+    # C#5 forces 9th position; an open G passes; G#4 follows quickly -> stay at B-string 9
+    # rather than leaping to e-string 4.
+    notes = [note(0.0, 73), note(0.1, 55), note(0.2, 68)]
+    out = assign(notes)
+    assert (out[2].string, out[2].fret) == (4, 9)
+
+
+def test_shift_is_cheap_after_a_long_gap():
+    # Same notes, but G#4 comes 2 s later: the hand has time to move to the low position.
+    notes = [note(0.0, 73), note(0.1, 55), note(2.2, 68)]
+    out = assign(notes)
+    assert (out[2].string, out[2].fret) == (5, 4)
+
+
+def test_equal_octaves_are_not_overtones():
+    # A genuine octave doubling (similar loudness) must be kept.
+    out = assign([vnote(0.0, 45, 70), vnote(0.0, 57, 70)])
+    assert all(n.string is not None for n in out)

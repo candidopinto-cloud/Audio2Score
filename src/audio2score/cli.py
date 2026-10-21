@@ -46,7 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     notes = fretting.assign(notes, cfg, p=args.playability)
     unplaced = sum(n.string is None for n in notes)
     if unplaced:
-        print(f"  {unplaced} notes could not be placed on the fretboard", file=sys.stderr)
+        print(
+            f"  {unplaced} notes left out of the tab (out of range, unplayable or likely"
+            " overtones; still in the MIDI)",
+            file=sys.stderr,
+        )
 
     written = export.write_all(notes, args.outdir, args.input.stem, formats, tuning=tuning)
     for path in written:

@@ -10,7 +10,9 @@ py -3.11 -m venv .venv
 .venv\Scripts\activate
 pip install -e .[dev,eval,basic_pitch]
 pytest
-audio2score data\song.mp3 -o output   # writes output\song.mid + song.tab.txt
+audio2score "data\my song.mp3" -o output   # writes output\my song.mid + my song.tab.txt
+# Without activating the venv, run from C:\Audio2Score:
+#   .\.venv\Scripts\audio2score "data\my song.mp3" -o output
 ```
 Also install ffmpeg (`winget install Gyan.FFmpeg`) and MuseScore 4 to view scores.
 
