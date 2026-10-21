@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def _basic_pitch(
     frame_threshold: float = 0.3,
     min_note_ms: float = 58.0,
 ) -> list[NoteEvent]:
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # hide TensorFlow's start-up chatter
     try:
         from basic_pitch.inference import predict
     except ImportError as e:

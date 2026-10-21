@@ -2,7 +2,7 @@ import pretty_midi
 import pytest
 
 from audio2score.export import render_tab, string_labels, write_all, write_midi
-from audio2score.models import NoteEvent
+from audio2score.models import NoteEvent, Transcription
 
 
 def fretted(onset, pitch, string, fret, dur=0.25):
@@ -59,11 +59,11 @@ def test_midi_roundtrip(tmp_path):
 
 def test_write_all(tmp_path):
     notes = [fretted(0.0, 64, 5, 0)]
-    paths = write_all(notes, tmp_path / "out", "song", ["midi", "tab"])
+    paths = write_all(Transcription(notes=notes), tmp_path / "out", "song", ["midi", "tab"])
     assert [p.name for p in paths] == ["song.mid", "song.tab.txt"]
     assert all(p.is_file() for p in paths)
 
 
 def test_write_all_unimplemented_format(tmp_path):
     with pytest.raises(NotImplementedError):
-        write_all([], tmp_path, "song", ["gp5"])
+        write_all(Transcription(), tmp_path, "song", ["gp5"])

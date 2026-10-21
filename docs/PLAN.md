@@ -24,11 +24,16 @@
       open strings.
 
 ## Milestone 2 — Classical-guitar transcription + score
-- [ ] Verify and integrate the GAPS model as the primary backend; compare with Basic Pitch.
-- [ ] `rhythm`: tempo/beat tracking, meter, quantize onsets/durations to a grid.
-- [ ] `voices`: split into bass / melody (+ inner) voices.
-- [ ] MusicXML export via music21 (voices, time/key signatures); open in MuseScore.
-- [ ] `scripts/evaluate.py`: note F1 vs. reference MIDI/MusicXML (mir_eval). Log in `docs/EVAL.md`.
+- [x] Verify the GAPS model (see docs/RESEARCH.md): code + weights MIT, training data non-commercial.
+- [ ] Integrate GAPS (`hf_midi_transcription`, needs torch cu128) as the primary backend; compare with Basic Pitch.
+- [x] `rhythm`: librosa beat tracking, meter guess (2/3/4) from bass accents, per-beat 16th/triplet grid.
+- [ ] Better beats for rubato playing (Beat This!, or `--bpm`/`--time-signature` hints); 6/8 and other compound meters.
+- [x] `voices`: bass (stems down) / upper voice (melody + inner notes as chords).
+- [x] MusicXML export via music21 (2 voices, time/key/tempo, legato fill, beat-safe tuplets); opens in MuseScore 4.
+      `--string-numbers` adds circled string numbers. A linked TAB staff would be better (Milestone 3).
+- [ ] Reference scores are PDFs: convert locally with Audiveris 5.11 (never MuseScore's online PDF import),
+      correct in MuseScore, save as MusicXML in `data/reference/`.
+- [ ] `scripts/evaluate.py`: align reference to recording (DTW), then note F1 (mir_eval). Log in `docs/EVAL.md`.
 
 ## Milestone 3 — Better tabs
 - [ ] Tune fretting cost weights against real classical fingerings.

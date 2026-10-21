@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from audio2score.fretting import group_chords
-from audio2score.models import STANDARD_TUNING, NoteEvent
+from audio2score.models import STANDARD_TUNING, NoteEvent, Transcription
 
 FORMATS = ("midi", "tab", "musicxml", "gp5")
-IMPLEMENTED = ("midi", "tab")
+IMPLEMENTED = ("midi", "tab", "musicxml")
 NYLON_GUITAR_PROGRAM = 24  # General MIDI "Acoustic Guitar (nylon)"
 _NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
@@ -97,12 +97,14 @@ def write_tab(notes: list[NoteEvent], path: str | Path, **kwargs) -> Path:
 
 
 def write_all(
-    notes: list[NoteEvent],
+    trans: Transcription,
     outdir: str | Path,
     stem: str,
     formats: list[str],
-    tuning: tuple[int, ...] = STANDARD_TUNING,
+    string_numbers: bool = False,
 ) -> list[Path]:
+    """MIDI and tab use all notes in seconds; MusicXML needs rhythm + voices to have run."""
+    notes, tuning = trans.notes, trans.tuning
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -111,7 +113,12 @@ def write_all(
             written.append(write_midi(notes, outdir / f"{stem}.mid"))
         elif fmt == "tab":
             written.append(write_tab(notes, outdir / f"{stem}.tab.txt", tuning=tuning))
-        elif fmt in ("musicxml", "gp5"):
+        elif fmt == "musicxml":
+            from audio2score.musicxml import write_musicxml
+
+            path = outdir / f"{stem}.musicxml"
+            written.append(write_musicxml(trans, path, title=stem, string_numbers=string_numbers))
+        elif fmt == "gp5":
             raise NotImplementedError(f"{fmt} export is not implemented yet (see docs/PLAN.md)")
         else:
             raise ValueError(f"unknown format {fmt!r}; choose from {FORMATS}")

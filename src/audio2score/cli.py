@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
-from audio2score import audio_io, export, fretting, transcribe
+from audio2score import audio_io, export, fretting, rhythm, transcribe, voices
 from audio2score.models import STANDARD_TUNING
 
 TUNINGS: dict[str, tuple[int, ...]] = {
@@ -19,11 +20,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="audio2score", description=__doc__)
     parser.add_argument("input", type=Path, help="audio or video file")
     parser.add_argument("-o", "--outdir", type=Path, default=Path("output"))
-    parser.add_argument("--formats", default="midi,tab", help="midi,musicxml,tab,gp5")
+    parser.add_argument("--formats", default="midi,tab,musicxml", help="midi,musicxml,tab,gp5")
     parser.add_argument("--backend", default="basic_pitch", choices=transcribe.BACKENDS)
     parser.add_argument("--tuning", default="standard", choices=sorted(TUNINGS))
     parser.add_argument("--max-fret", type=int, default=19)
     parser.add_argument("--playability", type=float, default=2.0, help="Lp-Viterbi p (1..inf)")
+    parser.add_argument(
+        "--time-signature", type=_time_signature, help="e.g. 3/4 (default: estimated)"
+    )
+    parser.add_argument("--bpm", type=float, help="tempo hint for the beat tracker")
+    parser.add_argument(
+        "--string-numbers", action="store_true", help="mark string numbers in the score"
+    )
     args = parser.parse_args(argv)
 
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
@@ -52,10 +60,36 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    written = export.write_all(notes, args.outdir, args.input.stem, formats, tuning=tuning)
+    print("Tracking beats and quantizing ...", file=sys.stderr)
+    trans = rhythm.run(audio, sr, notes, args.time_signature, args.bpm)
+    num, den = trans.time_signature
+    print(f"  ~{trans.tempo_bpm:.0f} BPM, {num}/{den}", file=sys.stderr)
+    trans.notes = voices.assign(trans.notes)
+    trans.tuning = tuning
+
+    # MIDI and tab get every note. The score leaves out notes the fretting dropped (likely
+    # overtones) but keeps notes that are just out of the guitar's range, so they can be reviewed.
+    score = dataclasses.replace(
+        trans,
+        notes=[
+            n for n in trans.notes if n.string is not None or not fretting.positions(n.pitch, cfg)
+        ],
+    )
+    written = []
+    for fmt in formats:
+        src = score if fmt == "musicxml" else trans
+        written += export.write_all(src, args.outdir, args.input.stem, [fmt], args.string_numbers)
     for path in written:
         print(f"Wrote {path}", file=sys.stderr)
     return 0
+
+
+def _time_signature(text: str) -> tuple[int, int]:
+    try:
+        num, den = (int(x) for x in text.split("/"))
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected N/D, got {text!r}") from e
+    return num, den
 
 
 if __name__ == "__main__":
