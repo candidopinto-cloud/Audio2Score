@@ -23,6 +23,8 @@ basic_pitch = ["basic-pitch>=0.4,<0.5"]
 # while basic-pitch pins resampy<0.4.3. Install it with --no-deps instead; see README.
 separation = ["demucs"]
 eval = ["mir_eval"]
+# scripts/omr.py (Audiveris itself is a separate install: winget install audiveris.org.Audiveris)
+omr = ["pypdfium2"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

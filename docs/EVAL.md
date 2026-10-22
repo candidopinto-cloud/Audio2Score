@@ -40,3 +40,28 @@ proof of accuracy — needs reference scores. GAPS is now the default backend.
 
 Audiveris sanity check: OMR of our own MuseScore-rendered Porto page 1 (35 bars, rhythmically
 messy) recovered 81% of pitches per bar and 57% at the exact position — expect manual correction.
+
+## Note F1 vs. reference scores (2026-10-21)
+
+Reference aligned to the transcription by DTW on pitch-class activity, then mir_eval (onset tolerance, offsets ignored). Raw OMR references contain recognition errors.
+
+| Piece | Backend | Ref | Ref notes | Est notes | P@50 | R@50 | F1@50ms | F1@100ms |
+|-------|---------|-----|-----------|-----------|------|------|---------|----------|
+| Abel Carlevaro - Preludios Americanos (Evocación) | gaps | raw OMR | 205 | 848 | 0.03 | 0.14 | 0.05 | 0.06 |
+| Abel Carlevaro - Preludios Americanos (Evocación) | basic_pitch | raw OMR | 205 | 1719 | 0.01 | 0.11 | 0.02 | 0.03 |
+| Hans_Werner_Henze_-_Drei_tentos | gaps | raw OMR | 1141 | 1191 | 0.44 | 0.46 | 0.45 | 0.55 |
+| Hans_Werner_Henze_-_Drei_tentos | basic_pitch | raw OMR | 1141 | 1801 | 0.26 | 0.41 | 0.31 | 0.39 |
+| Pensamiento_Espanol_by_Jose_Broca | gaps | raw OMR | 1147 | 1396 | 0.46 | 0.56 | 0.51 | 0.58 |
+| Pensamiento_Espanol_by_Jose_Broca | basic_pitch | raw OMR | 1147 | 2130 | 0.27 | 0.51 | 0.35 | 0.43 |
+
+Notes on this table:
+- **Carlevaro: ignore.** Its OMR result is unusable (bass clef, wrong key, garbled notes — the
+  scan is dense with fingerings, string numbers and barré marks). Needs manual entry/correction.
+- **Broca** (clean modern engraving) is the most trustworthy reference; OMR still drops the small
+  ornament notes and adds stray clef changes. Diagnostics for GAPS: F1 0.51 → 0.67 when the
+  onset tolerance is widened from 50 to 400 ms, and only ~+4 points when octaves are ignored, so
+  most misses are not timing or octave errors: ~1/3 of GAPS notes and ~1/4 of reference notes have
+  no counterpart at all (OMR omissions, edition vs. performance differences, transcription errors —
+  not separable until the reference is corrected).
+- GAPS beats Basic Pitch on every piece (+0.14 to +0.16 F1@50ms). Absolute numbers are lower
+  bounds until the references are corrected in MuseScore.

@@ -14,7 +14,9 @@ Never use MuseScore's "Import PDF" for these scores: it uploads them to musescor
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,13 +35,64 @@ def find_audiveris() -> Path:
     sys.exit("Audiveris not found: winget install audiveris.org.Audiveris (or set AUDIVERIS_EXE)")
 
 
+MAX_PIXELS = 16_000_000  # Audiveris rejects sheets above 20 Mpixels
+MAX_DPI = 300
+STEP_TIMEOUT_S = 600
+FAILED_SHEET = re.compile(r"#(\d+)\][^\n]*Error processing stub")
+
+
+def pdf_resolution(pdf: Path) -> tuple[int, int]:
+    """(page count, DPI) such that every page stays under MAX_PIXELS when rasterized.
+
+    Scanned PDFs often declare one point per scanned pixel, i.e. huge pages that the default
+    300 DPI would blow up to 100+ Mpixels.
+    """
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf))
+    sizes = [doc[i].get_size() for i in range(len(doc))]  # points, 1/72 inch
+    largest = max(w * h for w, h in sizes)
+    return len(sizes), min(MAX_DPI, int(72 * math.sqrt(MAX_PIXELS / largest)))
+
+
+def run_audiveris(audiveris: Path, pdf: Path, work: Path, dpi: int, sheets: list[int] | None):
+    cmd = [str(audiveris), "-batch", "-transcribe", "-export", "-save"]
+    cmd += ["-constant", f"org.audiveris.omr.image.ImageLoading.pdfResolution={dpi}"]
+    # Default is 120 s per step; pages with many meter changes need longer for RHYTHMS.
+    cmd += ["-constant", f"org.audiveris.omr.Main.sheetStepTimeOut={STEP_TIMEOUT_S}"]
+    cmd += ["-output", str(work)]
+    if sheets:
+        cmd += ["-sheets", *map(str, sheets)]
+    return subprocess.run(
+        [*cmd, "--", str(pdf)],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
 def convert(pdf: Path, audiveris: Path) -> list[Path]:
     work = REFERENCE / "omr"
     work.mkdir(parents=True, exist_ok=True)
-    cmd = [str(audiveris), "-batch", "-transcribe", "-export", "-save", "-output", str(work)]
-    proc = subprocess.run(
-        [*cmd, "--", str(pdf)], check=False, capture_output=True, text=True, errors="replace"
-    )
+    n_pages, dpi = pdf_resolution(pdf)
+    # Start from a fresh book: re-processing a book left over from a failed run breaks Audiveris.
+    (work / f"{pdf.stem}.omr").unlink(missing_ok=True)
+    for old in [
+        *REFERENCE.glob(f"{pdf.stem}.omr.mxl"),
+        *REFERENCE.glob(f"{pdf.stem}.mvt*.omr.mxl"),
+    ]:
+        old.unlink()  # results of an earlier run, which may have had different movements
+    proc = run_audiveris(audiveris, pdf, work, dpi, None)
+    skipped: list[int] = []
+    if proc.returncode != 0:
+        # One sheet without music (cover, text page) makes the whole book fail: retry without it.
+        skipped = sorted({int(m) for m in FAILED_SHEET.findall(proc.stdout)})
+        keep = [i for i in range(1, n_pages + 1) if i not in skipped]
+        if skipped and keep:
+            print(f"  pages without recognizable music, skipped: {skipped}")
+            (work / f"{pdf.stem}.omr").unlink(missing_ok=True)
+            proc = run_audiveris(audiveris, pdf, work, dpi, keep)
     # A book with several movements is exported as <name>.mvt1.mxl, <name>.mvt2.mxl, ...
     exported = sorted(work.glob(f"{pdf.stem}.mxl")) + sorted(work.glob(f"{pdf.stem}.mvt*.mxl"))
     if proc.returncode != 0 or not exported:
@@ -48,6 +101,8 @@ def convert(pdf: Path, audiveris: Path) -> list[Path]:
     results = []
     for src in exported:
         suffix = src.name[len(pdf.stem) :].removesuffix(".mxl")  # "" or ".mvt1"
+        if suffix == ".mvtnull":  # Audiveris quirk when only some sheets are processed
+            suffix = ""
         dest = REFERENCE / f"{pdf.stem}{suffix}.omr.mxl"
         shutil.move(str(src), dest)
         results.append(dest)

@@ -32,9 +32,12 @@
 - [x] MusicXML export via music21 (2 voices, time/key/tempo, legato fill, beat-safe tuplets); opens in MuseScore 4.
       `--string-numbers` adds circled string numbers. A linked TAB staff would be better (Milestone 3).
 - [x] `scripts/omr.py`: PDF -> MusicXML locally with Audiveris 5.11 (installed).
-- [ ] Owner: put PDFs in `data/reference/`, run the script, correct the results in MuseScore.
+- [x] Owner added 3 score/recording pairs (Broca, Henze, Carlevaro). omr.py handles huge scanned
+      pages (per-PDF DPI), cover pages (retry without failed sheets) and slow pages (600 s timeout).
+- [ ] Owner: correct the OMR results in MuseScore (Broca first; Carlevaro needs re-entry).
 - [ ] Key detection: Rosas comes out in G major with many accidentals; check against the real score.
-- [ ] `scripts/evaluate.py`: align reference to recording (DTW), then note F1 (mir_eval). Log in `docs/EVAL.md`.
+- [x] `scripts/evaluate.py`: align reference to recording (DTW on chroma), then note F1 (mir_eval);
+      `--log` appends to `docs/EVAL.md`. First numbers vs raw OMR: GAPS 0.45–0.51, Basic Pitch 0.31–0.35.
 
 ## Milestone 3 — Better tabs
 - [ ] Tune fretting cost weights against real classical fingerings.
