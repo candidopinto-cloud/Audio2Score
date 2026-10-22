@@ -19,12 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 # Basic Pitch 0.4 (Apache-2.0). On Windows it pulls TensorFlow 2.15 and pins numpy<2.
 basic_pitch = ["basic-pitch>=0.4,<0.5"]
-# For GAPS (Milestone 2). RTX 50-series GPUs need a CUDA 12.8+ build of torch:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
-ml = [
-    "torch",
-    # "gaps"  # TODO: verify how the GAPS model is distributed, then add here
-]
+# GAPS backend (default when installed) is not listed here: its dependency pins resampy>=0.4.3
+# while basic-pitch pins resampy<0.4.3. Install it with --no-deps instead; see README.
 separation = ["demucs"]
 eval = ["mir_eval"]
 dev = ["pytest", "ruff"]

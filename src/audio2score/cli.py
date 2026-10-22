@@ -21,7 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=Path, help="audio or video file")
     parser.add_argument("-o", "--outdir", type=Path, default=Path("output"))
     parser.add_argument("--formats", default="midi,tab,musicxml", help="midi,musicxml,tab,gp5")
-    parser.add_argument("--backend", default="basic_pitch", choices=transcribe.BACKENDS)
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=transcribe.BACKENDS,
+        help="auto = gaps if installed, else basic_pitch",
+    )
     parser.add_argument("--tuning", default="standard", choices=sorted(TUNINGS))
     parser.add_argument("--max-fret", type=int, default=19)
     parser.add_argument("--playability", type=float, default=2.0, help="Lp-Viterbi p (1..inf)")
@@ -46,8 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     audio, sr = audio_io.load(args.input)
     print(f"  {len(audio) / sr:.1f} s of audio", file=sys.stderr)
 
-    print(f"Transcribing with {args.backend} ...", file=sys.stderr)
-    notes = transcribe.run(audio, sr, backend=args.backend)
+    backend = transcribe.default_backend() if args.backend == "auto" else args.backend
+    print(f"Transcribing with {backend} ...", file=sys.stderr)
+    notes = transcribe.run(audio, sr, backend=backend)
     print(f"  {len(notes)} notes", file=sys.stderr)
 
     cfg = fretting.FretConfig(tuning=tuning, max_fret=args.max_fret)

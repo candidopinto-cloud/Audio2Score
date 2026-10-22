@@ -22,3 +22,21 @@ notes < 0.35 s apart that differ by >= 7 frets). Transcription: Basic Pitch 0.4.
 Of the notes left out after the change: Rosas 42/44 and Xaxado 193/210 are flagged overtones
 (a louder note an octave/12th/2 octaves below at the same onset), 6 are out of range, the rest
 (2 and 11) are quiet notes in large chords.
+
+## Backend comparison (2026-10-21, no reference)
+
+Agreement between backends (mir_eval note matching, onset ±50 ms, offsets ignored). "Overtone-like"
+= a louder note an octave/12th/2 octaves below at the same onset.
+
+| Piece | Basic Pitch notes | GAPS notes | GAPS notes also in BP | BP notes also in GAPS | Overtone-like BP / GAPS |
+|-------|-------------------|------------|-----------------------|-----------------------|-------------------------|
+| As Rosas Não Falam | 847 | 554 | 91% | 60% | 13% / 0% |
+| Porto | 882 | 986 | 70% | 78% | 2% / 0% |
+| São João Xaxado | 2845 | 1891 | 86% | 57% | 19% / 2% |
+
+GAPS runs in ~8 s per piece on the RTX 5080. For Rosas and Xaxado almost everything GAPS finds,
+Basic Pitch also finds, and Basic Pitch's ~40% extra notes look like duplicates/overtones. Not
+proof of accuracy — needs reference scores. GAPS is now the default backend.
+
+Audiveris sanity check: OMR of our own MuseScore-rendered Porto page 1 (35 bars, rhythmically
+messy) recovered 81% of pitches per bar and 57% at the exact position — expect manual correction.
